@@ -1,5 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getProject } from "@/server/actions/project";
+import { getMemberRole } from "@/server/actions/workspace";
+import { ProjectSettingsClient } from "@/components/projects/ProjectSettingsClient";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Calendar, Tag, Github, Users, ListTodo, ShieldAlert } from "lucide-react";
@@ -25,6 +27,10 @@ export default async function ProjectOverviewPage({ params }: OverviewPageProps)
     redirect("/projects");
   }
 
+  const role = await getMemberRole(project.workspaceId, session.user.id);
+  const canEdit = role === "ADMIN" || role === "PROJECT_MANAGER";
+  const canDelete = role === "ADMIN";
+
   // Count tickets and bugs
   const ticketsCount = await prisma.ticket.count({ where: { projectId: id } });
   const openTicketsCount = await prisma.ticket.count({
@@ -42,8 +48,11 @@ export default async function ProjectOverviewPage({ params }: OverviewPageProps)
       <div className="lg:col-span-2 space-y-6">
         {/* Project Description card */}
         <Card className="border border-border/80 bg-card/45">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-semibold">About Project</CardTitle>
+            {canEdit && (
+              <ProjectSettingsClient project={project} canDelete={canDelete} />
+            )}
           </CardHeader>
           <CardContent className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
             {project.description || "No project description provided."}
