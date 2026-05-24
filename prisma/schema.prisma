@@ -1,0 +1,463 @@
+// DevBoard AI - Prisma Schema
+// GitHub-only AI-powered Project Management System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// AUTH MODELS (NextAuth v5 compatible)
+// ============================================================
+
+model User {
+  id                String    @id @default(cuid())
+  name              String?
+  email             String?   @unique
+  emailVerified     DateTime?
+  image             String?
+  githubId          String?   @unique
+  githubUsername     String?   @unique
+  githubAvatarUrl   String?
+  githubProfileUrl  String?
+  isSuperAdmin      Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  accounts          Account[]
+  sessions          Session[]
+  workspacesCreated Workspace[]
+  workspaceMembers  WorkspaceMember[]
+  invitesSent       WorkspaceInvite[]   @relation("InvitesSent")
+  projectsCreated   Project[]
+  projectMembers    ProjectMember[]
+  ticketsAssigned   Ticket[]            @relation("TicketAssignee")
+  ticketsReported   Ticket[]            @relation("TicketReporter")
+  ticketComments    TicketComment[]
+  bugsCreated       BugReport[]         @relation("BugCreator")
+  bugsAssigned      BugReport[]         @relation("BugAssignee")
+  ideFilesEdited    IDEFile[]
+  aiReports         AIReport[]
+  activityLogs      ActivityLog[]
+  notifications     Notification[]
+  commitLogs        GitHubCommitLog[]
+}
+
+model Account {
+  id                       String  @id @default(cuid())
+  userId                   String
+  type                     String
+  provider                 String
+  providerAccountId        String
+  refresh_token            String?
+  access_token             String?
+  expires_at               Int?
+  token_type               String?
+  scope                    String?
+  id_token                 String?
+  session_state            String?
+  refresh_token_expires_in Int?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================
+// WORKSPACE MODELS
+// ============================================================
+
+model Workspace {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  description  String?
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  // Custom configurations
+  inviteCode   String?  @unique
+  geminiApiKey String?
+  openaiApiKey String?
+  aiProvider   String?  @default("google_gemini")
+  aiApiKey     String?
+  aiApiUrl     String?
+  aiModel      String?
+
+  // Relations
+  createdBy    User              @relation(fields: [createdById], references: [id])
+  members      WorkspaceMember[]
+  invites      WorkspaceInvite[]
+  projects     Project[]
+  activityLogs ActivityLog[]
+  repositories GitHubRepository[]
+}
+
+enum WorkspaceRole {
+  ADMIN
+  PROJECT_MANAGER
+  DEVELOPER
+  VIEWER
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        WorkspaceRole @default(DEVELOPER)
+  joinedAt    DateTime      @default(now())
+  invitedById String?
+
+  // Relations
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+model WorkspaceInvite {
+  id                    String        @id @default(cuid())
+  workspaceId           String
+  invitedEmail          String?
+  invitedGithubUsername String?
+  inviteCode            String?       @unique
+  inviteToken           String?       @unique
+  role                  WorkspaceRole @default(DEVELOPER)
+  status                InviteStatus  @default(PENDING)
+  invitedById           String
+  expiresAt             DateTime
+  createdAt             DateTime      @default(now())
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User      @relation("InvitesSent", fields: [invitedById], references: [id])
+}
+
+// ============================================================
+// PROJECT MODELS
+// ============================================================
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  workspaceId    String
+  name           String
+  description    String?      
+  status         ProjectStatus @default(PLANNING)
+  deadline       DateTime?
+  techStack      String[]
+  repositoryLink String?
+  createdById    String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relations
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy    User               @relation(fields: [createdById], references: [id])
+  members      ProjectMember[]
+  tickets      Ticket[]
+  bugReports   BugReport[]
+  ideFiles     IDEFile[]
+  aiReports    AIReport[]
+  activityLogs ActivityLog[]
+  repositories GitHubRepository[]
+  commitLogs   GitHubCommitLog[]
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  joinedAt  DateTime @default(now())
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+}
+
+// ============================================================
+// TICKET MODELS
+// ============================================================
+
+enum TicketType {
+  BUG
+  FEATURE
+  TASK
+  IMPROVEMENT
+  DOCUMENTATION
+}
+
+enum TicketStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Ticket {
+  id          String         @id @default(cuid())
+  projectId   String
+  title       String
+  description String?       
+  type        TicketType     @default(TASK)
+  status      TicketStatus   @default(BACKLOG)
+  priority    TicketPriority @default(MEDIUM)
+  assigneeId  String?
+  reporterId  String
+  dueDate     DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee User?           @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  reporter User            @relation("TicketReporter", fields: [reporterId], references: [id])
+  comments TicketComment[]
+}
+
+model TicketComment {
+  id        String   @id @default(cuid())
+  ticketId  String
+  userId    String
+  content   String  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+// ============================================================
+// BUG REPORT MODEL
+// ============================================================
+
+enum BugSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BugStatus {
+  OPEN
+  INVESTIGATING
+  FIXED
+  CLOSED
+}
+
+model BugReport {
+  id                  String      @id @default(cuid())
+  projectId           String
+  title               String
+  errorMessage        String?    
+  component           String?
+  severity            BugSeverity @default(MEDIUM)
+  stepsToReproduce    String?    
+  expectedResult      String?    
+  actualResult        String?    
+  screenshotUrl       String?
+  assignedDeveloperId String?
+  status              BugStatus   @default(OPEN)
+  createdById         String
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  // Relations
+  project           Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedDeveloper User?   @relation("BugAssignee", fields: [assignedDeveloperId], references: [id])
+  createdBy         User    @relation("BugCreator", fields: [createdById], references: [id])
+}
+
+// ============================================================
+// IDE FILE MODEL
+// ============================================================
+
+enum FileStatus {
+  UNCHANGED
+  MODIFIED
+  ADDED
+  DELETED
+}
+
+model IDEFile {
+  id             String     @id @default(cuid())
+  projectId      String
+  repositoryId   String?
+  path           String
+  fileName       String
+  language       String?
+  content        String?   
+  githubSha      String?
+  status         FileStatus @default(UNCHANGED)
+  lastEditedById String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relations
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  repository   GitHubRepository? @relation(fields: [repositoryId], references: [id])
+  lastEditedBy User?             @relation(fields: [lastEditedById], references: [id])
+
+  @@unique([projectId, path])
+}
+
+// ============================================================
+// GITHUB MODELS
+// ============================================================
+
+model GitHubRepository {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String?
+  owner           String
+  repo            String
+  fullName        String
+  defaultBranch   String   @default("main")
+  githubRepoId    Int?
+  connectedById   String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project    Project?          @relation(fields: [projectId], references: [id])
+  branches   GitHubBranch[]
+  commitLogs GitHubCommitLog[]
+  ideFiles   IDEFile[]
+
+  @@unique([workspaceId, fullName])
+}
+
+model GitHubBranch {
+  id           String   @id @default(cuid())
+  repositoryId String
+  name         String
+  sha          String?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  repository GitHubRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, name])
+}
+
+model GitHubCommitLog {
+  id                String   @id @default(cuid())
+  repositoryId      String
+  projectId         String?
+  userId            String
+  branch            String
+  commitSha         String
+  commitMessage     String  
+  changedFilesCount Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  // Relations
+  repository GitHubRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  project    Project?         @relation(fields: [projectId], references: [id])
+  user       User             @relation(fields: [userId], references: [id])
+}
+
+// ============================================================
+// AI REPORT MODEL
+// ============================================================
+
+model AIReport {
+  id            String   @id @default(cuid())
+  projectId     String
+  reportType    String
+  title         String
+  content       String  
+  generatedById String
+  createdAt     DateTime @default(now())
+
+  // Relations
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  generatedBy User    @relation(fields: [generatedById], references: [id])
+}
+
+// ============================================================
+// ACTIVITY LOG MODEL
+// ============================================================
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  projectId   String?
+  userId      String
+  action      String
+  description String  
+  createdAt   DateTime @default(now())
+
+  // Relations
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
+}
+
+// ============================================================
+// NOTIFICATION MODEL
+// ============================================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String  
+  type      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
