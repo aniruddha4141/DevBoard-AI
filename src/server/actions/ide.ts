@@ -210,7 +210,6 @@ export async function getIDEFiles(projectId: string) {
   const session = await auth();
   if (!session?.user?.id) return [];
 
-  // Exclude DELETED status files from appearing in explorer tree
   return prisma.iDEFile.findMany({
     where: {
       projectId,
@@ -219,3 +218,38 @@ export async function getIDEFiles(projectId: string) {
     orderBy: { path: "asc" },
   });
 }
+
+export async function askAICoderAction({
+  projectId,
+  prompt,
+  filePath,
+  fileContent,
+  mode,
+}: {
+  projectId: string;
+  prompt: string;
+  filePath?: string;
+  fileContent?: string;
+  mode: "chat" | "vibe";
+}) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { workspaceId: true },
+  });
+
+  if (!project) throw new Error("Project not found");
+
+  const userId = session.user.id;
+  const userRole = await getMemberRole(project.workspaceId, userId);
+
+  if (!userRole) {
+    throw new Error("Permission denied to access project");
+  }
+
+  const { generateAICode } = await import("@/lib/ai");
+  return generateAICode(prompt, { filePath, fileContent, mode });
+}
+

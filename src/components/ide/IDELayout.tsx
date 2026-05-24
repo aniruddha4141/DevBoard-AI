@@ -27,6 +27,7 @@ import {
   Terminal as TerminalIcon,
   Search,
   Check,
+  Sparkles,
 } from "lucide-react";
 import { FileStatus, WorkspaceRole } from "@prisma/client";
 import { toast } from "sonner";
@@ -52,6 +53,80 @@ export function IDELayout({ projectId, initialFiles, userRole }: IDELayoutProps)
   const [openTabs, setOpenTabs] = React.useState<IDEFile[]>([]);
   const [activeFile, setActiveFile] = React.useState<IDEFile | null>(null);
   const [editorContent, setEditorContent] = React.useState("");
+
+  // AI Coder panel states
+  const [isAIPanelOpen, setIsAIPanelOpen] = React.useState(false);
+  const [aiTab, setAiTab] = React.useState<"chat" | "vibe">("chat");
+  const [chatInput, setChatInput] = React.useState("");
+  const [chatMessages, setChatMessages] = React.useState<{ sender: "user" | "ai"; text: string }[]>([
+    {
+      sender: "ai",
+      text: "Hi! I am your AI coding partner. Ask me anything about your files, or switch to Vibe Coder tab to write/generate code directly into the editor!",
+    },
+  ]);
+  const [isAILoading, setIsAILoading] = React.useState(false);
+  const [vibeInput, setVibeInput] = React.useState("");
+  const [vibeOutput, setVibeOutput] = React.useState("");
+
+  const handleChatSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userMsg = chatInput.trim();
+    setChatMessages((prev) => [...prev, { sender: "user", text: userMsg }]);
+    setChatInput("");
+    setIsAILoading(true);
+
+    try {
+      const { askAICoderAction } = await import("@/server/actions/ide");
+      const res = await askAICoderAction({
+        projectId,
+        prompt: userMsg,
+        filePath: activeFile?.path || undefined,
+        fileContent: editorContent || undefined,
+        mode: "chat",
+      });
+
+      setChatMessages((prev) => [...prev, { sender: "ai", text: res.content }]);
+    } catch (err) {
+      setChatMessages((prev) => [
+        ...prev,
+        { sender: "ai", text: `⚠️ Error: ${err instanceof Error ? err.message : "Failed to contact AI provider"}` },
+      ]);
+    } finally {
+      setIsAILoading(false);
+    }
+  };
+
+  const handleSendVibeCode = async () => {
+    if (!vibeInput.trim() || !activeFile) return;
+
+    setIsAILoading(true);
+    setVibeOutput("");
+    try {
+      const { askAICoderAction } = await import("@/server/actions/ide");
+      const res = await askAICoderAction({
+        projectId,
+        prompt: vibeInput.trim(),
+        filePath: activeFile.path,
+        fileContent: editorContent,
+        mode: "vibe",
+      });
+
+      setVibeOutput(res.content);
+      toast.success("AI code generated!");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to generate AI code");
+    } finally {
+      setIsAILoading(false);
+    }
+  };
+
+  const handleApplyVibeCode = () => {
+    if (!vibeOutput) return;
+    setEditorContent(vibeOutput);
+    toast.success("Applied AI code to editor! Don't forget to save (Ctrl+S).");
+  };
   
   // Terminal execution states
   const [terminalLogs, setTerminalLogs] = React.useState<string[]>([
@@ -397,6 +472,16 @@ export function IDELayout({ projectId, initialFiles, userRole }: IDELayoutProps)
             <>
               {/* Toolbar action buttons overlay */}
               <div className="absolute right-6 top-3 z-10 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsAIPanelOpen(!isAIPanelOpen)}
+                  className={`h-7 px-3 text-[10px] font-semibold gap-1 border-border/85 cursor-pointer ${
+                    isAIPanelOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Sparkles className="h-3 w-3 text-yellow-500" /> AI Assistant
+                </Button>
                 {canEdit && (
                   <Button
                     size="sm"
@@ -469,6 +554,156 @@ export function IDELayout({ projectId, initialFiles, userRole }: IDELayoutProps)
           </form>
         </div>
       </div>
+
+      {/* 3. AI Sidebar Assistant */}
+      {isAIPanelOpen && (
+        <div className="w-[320px] border-l border-border bg-card/65 flex flex-col justify-between shrink-0 animate-in slide-in-from-right-5 duration-300">
+          <div className="p-3 border-b border-border/80 flex items-center justify-between">
+            <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-yellow-500 animate-pulse" /> AI Assistant
+            </span>
+            <button
+              onClick={() => setIsAIPanelOpen(false)}
+              className="h-5 w-5 rounded hover:bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+
+          {/* Sub tabs: Chat vs Vibe */}
+          <div className="flex border-b border-border/50 bg-secondary/10 p-1 gap-1">
+            <button
+              onClick={() => setAiTab("chat")}
+              className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                aiTab === "chat"
+                  ? "bg-card text-foreground shadow-xs border border-border/60"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Chat Coder
+            </button>
+            <button
+              onClick={() => setAiTab("vibe")}
+              className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                aiTab === "vibe"
+                  ? "bg-card text-foreground shadow-xs border border-border/60"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Vibe Coder
+            </button>
+          </div>
+
+          {/* Content Area */}
+          <div className="flex-1 overflow-y-auto p-3 text-xs min-h-0 flex flex-col justify-between">
+            {aiTab === "chat" ? (
+              // Chat content
+              <div className="flex flex-col h-full justify-between gap-3 min-h-0">
+                <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 min-h-0">
+                  {chatMessages.map((msg, i) => (
+                    <div
+                      key={i}
+                      className={`flex flex-col gap-1 max-w-[85%] ${
+                        msg.sender === "user" ? "ml-auto items-end" : "mr-auto items-start"
+                      }`}
+                    >
+                      <span className="text-[9px] text-muted-foreground font-semibold">
+                        {msg.sender === "user" ? "You" : "AI Coder"}
+                      </span>
+                      <div
+                        className={`p-2.5 rounded-2xl text-[11px] leading-relaxed whitespace-pre-wrap border ${
+                          msg.sender === "user"
+                            ? "bg-primary text-primary-foreground border-primary/20 rounded-tr-none"
+                            : "bg-secondary/40 text-foreground border-border/80 rounded-tl-none"
+                        }`}
+                      >
+                        {msg.text}
+                      </div>
+                    </div>
+                  ))}
+                  {isAILoading && (
+                    <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] pl-1 py-1">
+                      <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                      AI Coder is typing...
+                    </div>
+                  )}
+                </div>
+
+                <form onSubmit={handleChatSubmit} className="flex gap-1.5 border-t border-border/40 pt-2.5">
+                  <Input
+                    placeholder={activeFile ? `Ask about ${activeFile.fileName}...` : "Ask a question..."}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    disabled={isAILoading}
+                    className="h-8 text-xs flex-1"
+                  />
+                  <Button type="submit" size="sm" disabled={isAILoading || !chatInput.trim()} className="h-8 px-2.5">
+                    Send
+                  </Button>
+                </form>
+              </div>
+            ) : (
+              // Vibe code content
+              <div className="flex flex-col h-full gap-3 min-h-0">
+                <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 min-h-0 text-left">
+                  <div className="p-3 rounded-lg border border-yellow-500/10 bg-yellow-500/5 text-yellow-500 text-[10px] leading-relaxed">
+                    💡 <strong>Vibe Coding:</strong> Write a prompt describing what code you want to generate. The AI will output raw code matching your request. You can preview it and replace the editor contents with one click!
+                  </div>
+
+                  <div className="space-y-1 mt-2">
+                    <Label htmlFor="vibe-prompt" className="text-[10px]">What code should we write?</Label>
+                    <textarea
+                      id="vibe-prompt"
+                      placeholder="e.g. Create a dynamic sum function, Add comments to the code, etc."
+                      value={vibeInput}
+                      onChange={(e) => setVibeInput(e.target.value)}
+                      disabled={isAILoading}
+                      rows={3}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </div>
+
+                  {vibeOutput && (
+                    <div className="space-y-2 mt-3">
+                      <Label className="text-[10px]">AI Code Output</Label>
+                      <pre className="p-2.5 rounded-lg border border-border bg-black/60 font-mono text-[10px] text-emerald-400 overflow-x-auto max-h-[150px] leading-relaxed">
+                        {vibeOutput}
+                      </pre>
+                      <Button
+                        onClick={handleApplyVibeCode}
+                        className="w-full h-8 text-[10px] font-bold gap-1 cursor-pointer bg-primary text-primary-foreground hover:bg-primary/95"
+                      >
+                        Apply Code to File
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-border/40 pt-2.5">
+                  <Button
+                    onClick={handleSendVibeCode}
+                    disabled={isAILoading || !vibeInput.trim() || !activeFile}
+                    className="w-full h-8 text-[10px] font-bold gap-1 cursor-pointer"
+                  >
+                    {isAILoading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5 text-yellow-400 animate-pulse" /> Vibe Code!
+                      </>
+                    )}
+                  </Button>
+                  {!activeFile && (
+                    <span className="text-[9px] text-red-400 block text-center mt-1">
+                      ⚠️ Open a file in the editor first.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* CREATE RESOURCE MODAL */}
       {createType && (

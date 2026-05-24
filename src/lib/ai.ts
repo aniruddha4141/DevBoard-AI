@@ -392,3 +392,49 @@ Recent Activity: ${data.recentActivity?.join(", ") || "No recent activity"}
 
   return prompts[reportType] || prompts.daily;
 }
+
+export async function generateAICode(
+  prompt: string,
+  context: {
+    filePath?: string;
+    fileContent?: string;
+    mode: "chat" | "vibe";
+  }
+): Promise<{ content: string; isMock: boolean }> {
+  let fullPrompt = "";
+
+  if (context.mode === "vibe") {
+    fullPrompt = `You are a world-class coding AI assistant integrated inside the DevBoard AI Web IDE.
+The user wants you to write code directly for the active file.
+
+Vibe Coding Prompt: ${prompt}
+Active File Path: ${context.filePath || "untitled"}
+Active File Current Content:
+\`\`\`
+${context.fileContent || ""}
+\`\`\`
+
+INSTRUCTIONS:
+1. Write the complete, updated code.
+2. Return ONLY the raw code content.
+3. Do NOT wrap the code in markdown code fences (like \`\`\`js or \`\`\`).
+4. Do NOT include any explanations, greetings, or descriptions. Just output the clean code that can replace the file content directly.`;
+  } else {
+    fullPrompt = `You are a world-class coding AI assistant integrated inside the DevBoard AI Web IDE.
+Answer the user's questions about their code.
+
+Active File Path: ${context.filePath || "None selected"}
+Active File Current Content:
+\`\`\`
+${context.fileContent || "No file open"}
+\`\`\`
+
+User Question: ${prompt}
+
+Provide a clear, helpful explanation, using markdown code blocks where appropriate.`;
+  }
+
+  const config = await getAIConfig();
+  return callAI(fullPrompt, config);
+}
+
